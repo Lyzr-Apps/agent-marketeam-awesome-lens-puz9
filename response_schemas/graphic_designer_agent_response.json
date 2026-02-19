@@ -1,0 +1,26 @@
+{
+  "agent_name": "Graphic Designer Agent",
+  "agent_id": "699775923b886b94bdf0775e",
+  "description": "Generates marketing visuals \u2014 hero images, social media graphics, banners \u2014 based on the content topic and key messaging",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "image_description": "string",
+    "design_notes": "string",
+    "suggested_usage": "string"
+  },
+  "example_response": {
+    "image_description": "sample string",
+    "design_notes": "sample string",
+    "suggested_usage": "sample string"
+  },
+  "has_module_outputs": true,
+  "module_outputs_example": {
+    "artifact_files": [
+      {
+        "file_url": "https://example.com/image.png"
+      }
+    ]
+  }
+}

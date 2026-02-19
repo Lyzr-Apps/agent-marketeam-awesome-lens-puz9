@@ -1,0 +1,24 @@
+{
+  "agent_name": "Content Writer Agent",
+  "agent_id": "69977571789451a1e1491af1",
+  "description": "Drafts long-form marketing content (blogs, articles, landing page copy) incorporating SEO keywords and structure from SEO Research Agent",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "article_title": "string",
+    "article_content": "string",
+    "meta_description": "string",
+    "word_count": "number",
+    "keywords_used": ["string"],
+    "content_type": "string"
+  },
+  "example_response": {
+    "article_title": "sample string",
+    "article_content": "sample string",
+    "meta_description": "sample string",
+    "word_count": 0,
+    "keywords_used": ["sample string"],
+    "content_type": "sample string"
+  }
+}

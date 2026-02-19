@@ -1,0 +1,63 @@
+{
+  "agents": {
+    "marketing_content_manager": {
+      "agent_id": "69977584321b34f0b20370ef",
+      "name": "Marketing Content Manager",
+      "type": "manager",
+      "provider": "OpenAI",
+      "model": "gpt-4.1",
+      "temperature": 0.3,
+      "top_p": 1,
+      "managed_agents": [
+        "699775720e98ba5c96c4678d",
+        "69977571789451a1e1491af1"
+      ],
+      "image_output_config": null,
+      "voice_config": null,
+      "file_output": false
+    },
+    "seo_research_agent": {
+      "agent_id": "699775720e98ba5c96c4678d",
+      "name": "SEO Research Agent",
+      "type": "sub-agent",
+      "provider": "Perplexity",
+      "model": "sonar-pro",
+      "temperature": 0.2,
+      "top_p": 1,
+      "managed_agents": [],
+      "image_output_config": null,
+      "voice_config": null,
+      "file_output": false
+    },
+    "content_writer_agent": {
+      "agent_id": "69977571789451a1e1491af1",
+      "name": "Content Writer Agent",
+      "type": "sub-agent",
+      "provider": "OpenAI",
+      "model": "gpt-4.1",
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "managed_agents": [],
+      "image_output_config": null,
+      "voice_config": null,
+      "file_output": false
+    },
+    "graphic_designer_agent": {
+      "agent_id": "699775923b886b94bdf0775e",
+      "name": "Graphic Designer Agent",
+      "type": "independent",
+      "provider": "Google",
+      "model": "gemini-2.5-pro",
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "managed_agents": [],
+      "image_output_config": {
+        "model": "dall-e-3"
+      },
+      "voice_config": null,
+      "file_output": false
+    }
+  },
+  "rag_ids": {},
+  "schedule_ids": {}
+}

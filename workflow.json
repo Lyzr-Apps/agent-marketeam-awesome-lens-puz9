@@ -1,0 +1,49 @@
+{
+  "nodes": [
+    {
+      "id": "input_node",
+      "type": "Input",
+      "label": "User Input",
+      "nodeCategory": "input"
+    },
+    {
+      "id": "marketing_content_manager",
+      "type": "Agent",
+      "label": "Marketing Content Manager",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "seo_research_agent",
+      "type": "Agent",
+      "label": "SEO Research Agent",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "content_writer_agent",
+      "type": "Agent",
+      "label": "Content Writer Agent",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "graphic_designer_agent",
+      "type": "Agent",
+      "label": "Graphic Designer Agent",
+      "nodeCategory": "agent"
+    },
+    {
+      "id": "output_node",
+      "type": "Output",
+      "label": "Output",
+      "nodeCategory": "end"
+    }
+  ],
+  "edges": [
+    { "source": "input_node", "target": "marketing_content_manager" },
+    { "source": "marketing_content_manager", "target": "seo_research_agent" },
+    { "source": "marketing_content_manager", "target": "content_writer_agent" },
+    { "source": "input_node", "target": "graphic_designer_agent" },
+    { "source": "seo_research_agent", "target": "output_node" },
+    { "source": "content_writer_agent", "target": "output_node" },
+    { "source": "graphic_designer_agent", "target": "output_node" }
+  ]
+}

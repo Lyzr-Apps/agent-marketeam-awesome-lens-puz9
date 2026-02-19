@@ -1,0 +1,60 @@
+{
+  "agent_name": "Marketing Content Manager",
+  "agent_id": "69977584321b34f0b20370ef",
+  "description": "Coordinates SEO research and content writing, routes topic brief to sub-agents and aggregates a final SEO-optimized article with keyword data",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "article_title": "string",
+    "article_content": "string",
+    "meta_description": "string",
+    "content_type": "string",
+    "seo_scorecard": {
+      "seo_score": "number",
+      "primary_keywords": [
+        {
+          "keyword": "string",
+          "volume": "string",
+          "density": "string"
+        }
+      ],
+      "secondary_keywords": [
+        "string"
+      ],
+      "recommendations": [
+        "string"
+      ],
+      "competitor_insights": [
+        "string"
+      ],
+      "search_intent": "string"
+    }
+  },
+  "example_response": {
+    "article_title": "sample string",
+    "article_content": "sample string",
+    "meta_description": "sample string",
+    "content_type": "sample string",
+    "seo_scorecard": {
+      "seo_score": 0,
+      "primary_keywords": [
+        {
+          "keyword": "sample string",
+          "volume": "sample string",
+          "density": "sample string"
+        }
+      ],
+      "secondary_keywords": [
+        "sample string"
+      ],
+      "recommendations": [
+        "sample string"
+      ],
+      "competitor_insights": [
+        "sample string"
+      ],
+      "search_intent": "sample string"
+    }
+  }
+}

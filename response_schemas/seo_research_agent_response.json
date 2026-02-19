@@ -1,0 +1,34 @@
+{
+  "agent_name": "SEO Research Agent",
+  "agent_id": "699775720e98ba5c96c4678d",
+  "description": "Performs keyword research, competitive analysis, and search intent mapping for the given topic using web search",
+  "agent_type": "json",
+  "accessor": "result",
+  "auto_generated": true,
+  "response_schema": {
+    "primary_keywords": [
+      {
+        "keyword": "string",
+        "volume": "string",
+        "density_target": "string"
+      }
+    ],
+    "secondary_keywords": ["string"],
+    "competitor_insights": ["string"],
+    "search_intent": "string",
+    "content_structure_recommendations": ["string"]
+  },
+  "example_response": {
+    "primary_keywords": [
+      {
+        "keyword": "sample string",
+        "volume": "sample string",
+        "density_target": "sample string"
+      }
+    ],
+    "secondary_keywords": ["sample string"],
+    "competitor_insights": ["sample string"],
+    "search_intent": "sample string",
+    "content_structure_recommendations": ["sample string"]
+  }
+}
