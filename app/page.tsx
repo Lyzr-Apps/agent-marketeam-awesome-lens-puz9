@@ -726,12 +726,14 @@ export default function Page() {
         }))
       }
 
-      // CRITICAL: Connect processor to a gain node that is NOT connected to destination.
-      // ScriptProcessor requires an output connection to fire onaudioprocess,
-      // but we must NOT route it to speakers (causes echo/double voice).
+      // ScriptProcessor.onaudioprocess only fires when the processor output
+      // is connected through a path that reaches audioContext.destination.
+      // We use a GainNode with gain=0 so no sound actually plays through
+      // this mic-only AudioContext. Playback uses a SEPARATE AudioContext
+      // (playbackContextRef) so there is no echo/feedback loop.
       const silentDest = audioContext.createGain()
       silentDest.gain.value = 0
-      // Do NOT connect silentDest to audioContext.destination
+      silentDest.connect(audioContext.destination)
 
       source.connect(processor)
       processor.connect(silentDest)
@@ -803,7 +805,8 @@ export default function Page() {
             setIsSpeaking(true)
           } else if (msg.type === 'clear') {
             // Agent interrupted, reset play queue
-            nextPlayTimeRef.current = audioContextRef.current?.currentTime || 0
+            nextPlayTimeRef.current = playbackContextRef.current?.currentTime || 0
+            isMutedDuringPlaybackRef.current = false
           } else if (msg.type === 'error') {
             setVoiceError(msg.message || 'Voice agent error')
           }
