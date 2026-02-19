@@ -544,12 +544,14 @@ export default function Page() {
   // Voice refs
   const wsRef = useRef<WebSocket | null>(null)
   const audioContextRef = useRef<AudioContext | null>(null)
+  const playbackContextRef = useRef<AudioContext | null>(null)
   const mediaStreamRef = useRef<MediaStream | null>(null)
   const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null)
   const sampleRateRef = useRef<number>(24000)
   const nextPlayTimeRef = useRef<number>(0)
-  const silentGainRef = useRef<GainNode | null>(null)
   const transcriptEndRef = useRef<HTMLDivElement | null>(null)
+  const isMutedDuringPlaybackRef = useRef<boolean>(false)
 
   // Load campaigns from localStorage
   useEffect(() => {
@@ -588,8 +590,13 @@ export default function Page() {
 
   const stopMicrophone = useCallback(() => {
     if (processorRef.current) {
+      processorRef.current.onaudioprocess = null
       processorRef.current.disconnect()
       processorRef.current = null
+    }
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect()
+      sourceNodeRef.current = null
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop())
@@ -608,13 +615,25 @@ export default function Page() {
       audioContextRef.current.close()
       audioContextRef.current = null
     }
+    if (playbackContextRef.current) {
+      playbackContextRef.current.close()
+      playbackContextRef.current = null
+    }
+    isMutedDuringPlaybackRef.current = false
     setVoiceStatus('idle')
     setIsListening(false)
     setIsSpeaking(false)
   }, [stopMicrophone])
 
-  const playAudioChunk = useCallback((base64Audio: string, audioContext: AudioContext) => {
+  const playAudioChunk = useCallback((base64Audio: string) => {
     try {
+      // Use a SEPARATE AudioContext for playback to prevent mic picking up speaker output
+      if (!playbackContextRef.current || playbackContextRef.current.state === 'closed') {
+        playbackContextRef.current = new AudioContext({ sampleRate: sampleRateRef.current })
+        nextPlayTimeRef.current = playbackContextRef.current.currentTime
+      }
+      const playCtx = playbackContextRef.current
+
       const binaryString = atob(base64Audio)
       const bytes = new Uint8Array(binaryString.length)
       for (let i = 0; i < binaryString.length; i++) {
@@ -627,22 +646,26 @@ export default function Page() {
         float32[i] = pcm16[i] / 32768
       }
 
-      const audioBuffer = audioContext.createBuffer(1, float32.length, sampleRateRef.current)
+      const audioBuffer = playCtx.createBuffer(1, float32.length, sampleRateRef.current)
       audioBuffer.getChannelData(0).set(float32)
 
-      const sourceNode = audioContext.createBufferSource()
-      sourceNode.buffer = audioBuffer
-      sourceNode.connect(audioContext.destination)
+      const bufferSource = playCtx.createBufferSource()
+      bufferSource.buffer = audioBuffer
+      bufferSource.connect(playCtx.destination)
 
-      // Schedule sequentially to prevent overlapping
-      const now = audioContext.currentTime
+      // Schedule sequentially to prevent overlapping garbled speech
+      const now = playCtx.currentTime
       const startTime = Math.max(now, nextPlayTimeRef.current)
-      sourceNode.start(startTime)
+      bufferSource.start(startTime)
       nextPlayTimeRef.current = startTime + audioBuffer.duration
 
-      sourceNode.onended = () => {
-        if (nextPlayTimeRef.current <= audioContext.currentTime + 0.1) {
+      // Mute mic while agent is speaking to prevent echo feedback
+      isMutedDuringPlaybackRef.current = true
+
+      bufferSource.onended = () => {
+        if (nextPlayTimeRef.current <= playCtx.currentTime + 0.1) {
           setIsSpeaking(false)
+          isMutedDuringPlaybackRef.current = false
         }
       }
     } catch {
@@ -654,7 +677,6 @@ export default function Page() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: sampleRateRef.current,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
@@ -664,12 +686,23 @@ export default function Page() {
       mediaStreamRef.current = stream
 
       const source = audioContext.createMediaStreamSource(stream)
+      sourceNodeRef.current = source
       const processor = audioContext.createScriptProcessor(4096, 1, 1)
       processorRef.current = processor
 
       processor.onaudioprocess = (e) => {
         if (ws.readyState !== WebSocket.OPEN) return
+        // Mute mic input while agent is speaking to prevent echo/feedback
+        if (isMutedDuringPlaybackRef.current) return
+
         const inputData = e.inputBuffer.getChannelData(0)
+
+        // Check if audio is silence (skip sending empty frames)
+        let sum = 0
+        for (let i = 0; i < inputData.length; i++) {
+          sum += Math.abs(inputData[i])
+        }
+        if (sum / inputData.length < 0.001) return
 
         // Convert Float32 to PCM16
         const pcm16 = new Int16Array(inputData.length)
@@ -693,9 +726,15 @@ export default function Page() {
         }))
       }
 
-      // Connect to silent gain (NOT audioContext.destination to prevent echo)
+      // CRITICAL: Connect processor to a gain node that is NOT connected to destination.
+      // ScriptProcessor requires an output connection to fire onaudioprocess,
+      // but we must NOT route it to speakers (causes echo/double voice).
+      const silentDest = audioContext.createGain()
+      silentDest.gain.value = 0
+      // Do NOT connect silentDest to audioContext.destination
+
       source.connect(processor)
-      processor.connect(silentGainRef.current || audioContext.createGain())
+      processor.connect(silentDest)
 
       setIsListening(true)
     } catch {
@@ -725,17 +764,9 @@ export default function Page() {
       const wsUrl = data.wsUrl
       sampleRateRef.current = data.audioConfig?.sampleRate || 24000
 
-      // 2. Set up AudioContext
+      // 2. Set up AudioContext for mic capture only (separate from playback)
       const audioContext = new AudioContext({ sampleRate: sampleRateRef.current })
       audioContextRef.current = audioContext
-
-      // Create silent gain node (prevents echo)
-      const silentGain = audioContext.createGain()
-      silentGain.gain.value = 0
-      silentGain.connect(audioContext.destination)
-      silentGainRef.current = silentGain
-
-      nextPlayTimeRef.current = audioContext.currentTime
 
       // 3. Connect WebSocket
       const ws = new WebSocket(wsUrl)
@@ -752,7 +783,8 @@ export default function Page() {
 
           if (msg.type === 'audio' && msg.audio) {
             setIsSpeaking(true)
-            playAudioChunk(msg.audio, audioContext)
+            // Playback uses its own separate AudioContext (inside playAudioChunk)
+            playAudioChunk(msg.audio)
           } else if (msg.type === 'transcript') {
             const role = msg.role === 'user' ? 'user' as const : 'assistant' as const
             setVoiceTranscripts(prev => {
@@ -802,8 +834,14 @@ export default function Page() {
   useEffect(() => {
     return () => {
       if (wsRef.current) wsRef.current.close()
+      if (processorRef.current) {
+        processorRef.current.onaudioprocess = null
+        processorRef.current.disconnect()
+      }
+      if (sourceNodeRef.current) sourceNodeRef.current.disconnect()
       if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach(t => t.stop())
       if (audioContextRef.current) audioContextRef.current.close()
+      if (playbackContextRef.current) playbackContextRef.current.close()
     }
   }, [])
 
