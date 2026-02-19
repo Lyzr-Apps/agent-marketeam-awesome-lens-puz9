@@ -1,0 +1,10 @@
+{
+  "agent_name": "Voice Marketing Assistant",
+  "agent_id": "69977b013b886b94bdf07796",
+  "description": "Voice-enabled marketing consultant providing real-time marketing advice through natural voice conversation",
+  "agent_type": "voice",
+  "accessor": "voice",
+  "auto_generated": true,
+  "response_schema": {},
+  "example_response": {}
+}

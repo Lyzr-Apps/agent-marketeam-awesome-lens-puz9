@@ -1,9 +1,9 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { callAIAgent, AIAgentResponse } from '@/lib/aiAgent'
 import { copyToClipboard } from '@/lib/clipboard'
-import { FiFileText, FiImage, FiCopy, FiDownload, FiRefreshCw, FiClock, FiTrendingUp, FiEdit3, FiPlus, FiChevronRight, FiBarChart2, FiCheckCircle, FiAlertCircle, FiArrowLeft, FiStar, FiHash, FiTarget, FiEye, FiLayers, FiZap, FiSearch } from 'react-icons/fi'
+import { FiFileText, FiImage, FiCopy, FiDownload, FiRefreshCw, FiClock, FiTrendingUp, FiEdit3, FiPlus, FiChevronRight, FiBarChart2, FiCheckCircle, FiAlertCircle, FiArrowLeft, FiStar, FiHash, FiTarget, FiEye, FiLayers, FiZap, FiSearch, FiMic, FiMicOff, FiPhone, FiPhoneOff, FiMessageCircle, FiVolume2, FiX } from 'react-icons/fi'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,6 +23,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 
 const CONTENT_MANAGER_ID = '69977584321b34f0b20370ef'
 const GRAPHIC_DESIGNER_ID = '699775923b886b94bdf0775e'
+const VOICE_ASSISTANT_ID = '69977b013b886b94bdf07796'
 
 const THEME_VARS = {
   '--background': '30 40% 98%',
@@ -322,6 +323,7 @@ function AgentStatusPanel({ activeAgentId }: { activeAgentId: string | null }) {
   const agents = [
     { id: CONTENT_MANAGER_ID, name: 'Marketing Content Manager', purpose: 'Coordinates SEO research and content writing' },
     { id: GRAPHIC_DESIGNER_ID, name: 'Graphic Designer Agent', purpose: 'Generates marketing visuals and graphics' },
+    { id: VOICE_ASSISTANT_ID, name: 'Voice Marketing Assistant', purpose: 'Real-time marketing advice via voice' },
   ]
 
   return (
@@ -529,6 +531,26 @@ export default function Page() {
   // Mounted ref for date formatting
   const [mounted, setMounted] = useState(false)
 
+  // ============================================================
+  // VOICE STATE
+  // ============================================================
+  const [voiceOpen, setVoiceOpen] = useState(false)
+  const [voiceStatus, setVoiceStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
+  const [voiceTranscripts, setVoiceTranscripts] = useState<Array<{role: 'user' | 'assistant', text: string}>>([])
+  const [isListening, setIsListening] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+
+  // Voice refs
+  const wsRef = useRef<WebSocket | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const sampleRateRef = useRef<number>(24000)
+  const nextPlayTimeRef = useRef<number>(0)
+  const silentGainRef = useRef<GainNode | null>(null)
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null)
+
   // Load campaigns from localStorage
   useEffect(() => {
     setMounted(true)
@@ -559,6 +581,242 @@ export default function Page() {
       setNotes('')
     }
   }, [showSampleData, contentResult])
+
+  // ============================================================
+  // VOICE FUNCTIONS
+  // ============================================================
+
+  const stopMicrophone = useCallback(() => {
+    if (processorRef.current) {
+      processorRef.current.disconnect()
+      processorRef.current = null
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop())
+      mediaStreamRef.current = null
+    }
+    setIsListening(false)
+  }, [])
+
+  const endVoiceSession = useCallback(() => {
+    if (wsRef.current) {
+      wsRef.current.close()
+      wsRef.current = null
+    }
+    stopMicrophone()
+    if (audioContextRef.current) {
+      audioContextRef.current.close()
+      audioContextRef.current = null
+    }
+    setVoiceStatus('idle')
+    setIsListening(false)
+    setIsSpeaking(false)
+  }, [stopMicrophone])
+
+  const playAudioChunk = useCallback((base64Audio: string, audioContext: AudioContext) => {
+    try {
+      const binaryString = atob(base64Audio)
+      const bytes = new Uint8Array(binaryString.length)
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i)
+      }
+
+      const pcm16 = new Int16Array(bytes.buffer)
+      const float32 = new Float32Array(pcm16.length)
+      for (let i = 0; i < pcm16.length; i++) {
+        float32[i] = pcm16[i] / 32768
+      }
+
+      const audioBuffer = audioContext.createBuffer(1, float32.length, sampleRateRef.current)
+      audioBuffer.getChannelData(0).set(float32)
+
+      const sourceNode = audioContext.createBufferSource()
+      sourceNode.buffer = audioBuffer
+      sourceNode.connect(audioContext.destination)
+
+      // Schedule sequentially to prevent overlapping
+      const now = audioContext.currentTime
+      const startTime = Math.max(now, nextPlayTimeRef.current)
+      sourceNode.start(startTime)
+      nextPlayTimeRef.current = startTime + audioBuffer.duration
+
+      sourceNode.onended = () => {
+        if (nextPlayTimeRef.current <= audioContext.currentTime + 0.1) {
+          setIsSpeaking(false)
+        }
+      }
+    } catch {
+      // ignore decode errors
+    }
+  }, [])
+
+  const startMicrophone = useCallback(async (audioContext: AudioContext, ws: WebSocket) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: sampleRateRef.current,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      })
+      mediaStreamRef.current = stream
+
+      const source = audioContext.createMediaStreamSource(stream)
+      const processor = audioContext.createScriptProcessor(4096, 1, 1)
+      processorRef.current = processor
+
+      processor.onaudioprocess = (e) => {
+        if (ws.readyState !== WebSocket.OPEN) return
+        const inputData = e.inputBuffer.getChannelData(0)
+
+        // Convert Float32 to PCM16
+        const pcm16 = new Int16Array(inputData.length)
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]))
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF
+        }
+
+        // Convert to base64
+        const bytesArr = new Uint8Array(pcm16.buffer)
+        let binary = ''
+        for (let i = 0; i < bytesArr.length; i++) {
+          binary += String.fromCharCode(bytesArr[i])
+        }
+        const base64 = btoa(binary)
+
+        ws.send(JSON.stringify({
+          type: 'audio',
+          audio: base64,
+          sampleRate: sampleRateRef.current
+        }))
+      }
+
+      // Connect to silent gain (NOT audioContext.destination to prevent echo)
+      source.connect(processor)
+      processor.connect(silentGainRef.current || audioContext.createGain())
+
+      setIsListening(true)
+    } catch {
+      setVoiceError('Microphone access denied. Please allow microphone permissions.')
+      setVoiceStatus('error')
+    }
+  }, [])
+
+  const startVoiceSession = useCallback(async () => {
+    setVoiceStatus('connecting')
+    setVoiceError(null)
+    setVoiceTranscripts([])
+
+    try {
+      // 1. Start session
+      const res = await fetch('https://voice-sip.studio.lyzr.ai/session/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agentId: VOICE_ASSISTANT_ID }),
+      })
+
+      if (!res.ok) {
+        throw new Error(`Session start failed: ${res.status}`)
+      }
+
+      const data = await res.json()
+      const wsUrl = data.wsUrl
+      sampleRateRef.current = data.audioConfig?.sampleRate || 24000
+
+      // 2. Set up AudioContext
+      const audioContext = new AudioContext({ sampleRate: sampleRateRef.current })
+      audioContextRef.current = audioContext
+
+      // Create silent gain node (prevents echo)
+      const silentGain = audioContext.createGain()
+      silentGain.gain.value = 0
+      silentGain.connect(audioContext.destination)
+      silentGainRef.current = silentGain
+
+      nextPlayTimeRef.current = audioContext.currentTime
+
+      // 3. Connect WebSocket
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        setVoiceStatus('connected')
+        startMicrophone(audioContext, ws)
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data)
+
+          if (msg.type === 'audio' && msg.audio) {
+            setIsSpeaking(true)
+            playAudioChunk(msg.audio, audioContext)
+          } else if (msg.type === 'transcript') {
+            const role = msg.role === 'user' ? 'user' as const : 'assistant' as const
+            setVoiceTranscripts(prev => {
+              // Update last entry if same role, else add new
+              if (prev.length > 0 && prev[prev.length - 1].role === role && msg.final !== true) {
+                const updated = [...prev]
+                updated[updated.length - 1] = { role, text: msg.text || msg.content || '' }
+                return updated
+              }
+              return [...prev, { role, text: msg.text || msg.content || '' }]
+            })
+            if (msg.role !== 'user') {
+              setIsSpeaking(false)
+            }
+          } else if (msg.type === 'thinking') {
+            setIsSpeaking(true)
+          } else if (msg.type === 'clear') {
+            // Agent interrupted, reset play queue
+            nextPlayTimeRef.current = audioContextRef.current?.currentTime || 0
+          } else if (msg.type === 'error') {
+            setVoiceError(msg.message || 'Voice agent error')
+          }
+        } catch {
+          // ignore non-JSON messages
+        }
+      }
+
+      ws.onerror = () => {
+        setVoiceError('WebSocket connection error')
+        setVoiceStatus('error')
+      }
+
+      ws.onclose = () => {
+        setVoiceStatus('idle')
+        setIsListening(false)
+        setIsSpeaking(false)
+        stopMicrophone()
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to start voice session'
+      setVoiceError(message)
+      setVoiceStatus('error')
+    }
+  }, [startMicrophone, playAudioChunk, stopMicrophone])
+
+  // Cleanup voice on unmount
+  useEffect(() => {
+    return () => {
+      if (wsRef.current) wsRef.current.close()
+      if (mediaStreamRef.current) mediaStreamRef.current.getTracks().forEach(t => t.stop())
+      if (audioContextRef.current) audioContextRef.current.close()
+    }
+  }, [])
+
+  // Scroll transcripts to bottom
+  useEffect(() => {
+    if (transcriptEndRef.current) {
+      transcriptEndRef.current.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [voiceTranscripts])
+
+  // ============================================================
+  // CONTENT HANDLERS
+  // ============================================================
 
   // Content generation handler
   const handleGenerateContent = useCallback(async () => {
@@ -831,6 +1089,18 @@ export default function Page() {
                   {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
                 </button>
               ))}
+
+              {/* Voice Assistant nav button */}
+              <button
+                onClick={() => {
+                  setVoiceOpen(true)
+                  if (voiceStatus === 'idle') startVoiceSession()
+                }}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all duration-200 ${voiceOpen ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:bg-secondary/60 hover:text-foreground'}`}
+              >
+                <FiMic className="h-4 w-4" />
+                {!sidebarCollapsed && <span className="truncate">Voice Assistant</span>}
+              </button>
             </nav>
 
             {/* Agent Status */}
@@ -919,6 +1189,15 @@ export default function Page() {
                 className={`flex-1 flex items-center justify-center gap-2 py-3 text-xs font-medium transition-colors ${currentScreen === 'content-history' ? 'text-primary border-b-2 border-primary' : 'text-muted-foreground'}`}
               >
                 <FiClock className="h-3.5 w-3.5" /> History
+              </button>
+              <button
+                onClick={() => {
+                  setVoiceOpen(true)
+                  if (voiceStatus === 'idle') startVoiceSession()
+                }}
+                className="flex-1 flex items-center justify-center gap-2 py-3 text-xs font-medium text-muted-foreground transition-colors"
+              >
+                <FiMic className="h-3.5 w-3.5" /> Voice
               </button>
             </div>
 
@@ -1418,6 +1697,151 @@ export default function Page() {
             )}
           </div>
         </div>
+
+        {/* ======================== FLOATING VOICE BUTTON ======================== */}
+        {!voiceOpen && (
+          <button
+            onClick={() => {
+              setVoiceOpen(true)
+              if (voiceStatus === 'idle') startVoiceSession()
+            }}
+            className="fixed bottom-24 right-6 z-50 h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl transition-all duration-300 flex items-center justify-center hover:scale-105 group"
+            title="Voice Marketing Assistant"
+          >
+            <FiMic className="h-6 w-6" />
+            <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-green-500 border-2 border-background" />
+          </button>
+        )}
+
+        {/* ======================== VOICE ASSISTANT PANEL ======================== */}
+        {voiceOpen && (
+          <div className="fixed bottom-24 right-6 z-50 w-[380px] max-h-[520px] rounded-2xl border border-border/50 bg-card/95 backdrop-blur-xl shadow-2xl flex flex-col overflow-hidden" style={{ animation: 'slideUpFadeIn 0.3s ease-out' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border/50 bg-primary/5">
+              <div className="flex items-center gap-3">
+                <div className={`h-10 w-10 rounded-full flex items-center justify-center ${voiceStatus === 'connected' ? 'bg-green-500/10' : 'bg-primary/10'}`}>
+                  <FiMic className={`h-5 w-5 ${voiceStatus === 'connected' ? 'text-green-500' : 'text-primary'}`} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Voice Assistant</h3>
+                  <p className="text-[10px] text-muted-foreground">
+                    {voiceStatus === 'idle' && 'Ready to connect'}
+                    {voiceStatus === 'connecting' && 'Connecting...'}
+                    {voiceStatus === 'connected' && isListening && !isSpeaking && 'Listening...'}
+                    {voiceStatus === 'connected' && isSpeaking && 'Speaking...'}
+                    {voiceStatus === 'connected' && !isListening && !isSpeaking && 'Connected'}
+                    {voiceStatus === 'error' && 'Connection error'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                {voiceStatus === 'connected' && (
+                  <button
+                    onClick={endVoiceSession}
+                    className="h-8 w-8 rounded-full bg-destructive/10 text-destructive hover:bg-destructive/20 flex items-center justify-center transition-colors"
+                    title="End call"
+                  >
+                    <FiPhoneOff className="h-4 w-4" />
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setVoiceOpen(false)
+                    if (voiceStatus === 'connected') endVoiceSession()
+                  }}
+                  className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-secondary/60 flex items-center justify-center transition-colors"
+                >
+                  <FiX className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Transcript area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 min-h-[200px] max-h-[320px]">
+              {voiceTranscripts.length === 0 && voiceStatus !== 'connecting' && (
+                <div className="flex flex-col items-center justify-center h-full text-center py-8">
+                  <div className="h-16 w-16 rounded-full bg-primary/5 flex items-center justify-center mb-4">
+                    <FiMessageCircle className="h-8 w-8 text-primary/40" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    {voiceStatus === 'idle' ? 'Click the microphone to start a voice conversation' : 'Start speaking to get marketing advice'}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1">Ask about content strategy, SEO, campaigns, and more</p>
+                </div>
+              )}
+
+              {voiceStatus === 'connecting' && (
+                <div className="flex flex-col items-center justify-center h-full py-8">
+                  <FiRefreshCw className="h-8 w-8 text-primary animate-spin mb-3" />
+                  <p className="text-sm text-muted-foreground">Connecting to voice assistant...</p>
+                </div>
+              )}
+
+              {voiceTranscripts.map((t, i) => (
+                <div key={i} className={`flex ${t.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${t.role === 'user' ? 'bg-primary text-primary-foreground rounded-br-md' : 'bg-secondary/60 text-foreground rounded-bl-md'}`}>
+                    {t.text}
+                  </div>
+                </div>
+              ))}
+              <div ref={transcriptEndRef} />
+            </div>
+
+            {/* Error message */}
+            {voiceError && (
+              <div className="px-4 py-2 bg-destructive/5 border-t border-destructive/20">
+                <p className="text-[10px] text-destructive flex items-center gap-1.5">
+                  <FiAlertCircle className="h-3 w-3 flex-shrink-0" /> {voiceError}
+                </p>
+              </div>
+            )}
+
+            {/* Bottom controls */}
+            <div className="flex items-center justify-center gap-3 px-4 py-4 border-t border-border/50 bg-card/80">
+              {voiceStatus === 'idle' || voiceStatus === 'error' ? (
+                <button
+                  onClick={startVoiceSession}
+                  className="h-14 w-14 rounded-full bg-primary text-primary-foreground shadow-lg hover:shadow-xl transition-all flex items-center justify-center hover:scale-105"
+                >
+                  <FiPhone className="h-6 w-6" />
+                </button>
+              ) : voiceStatus === 'connecting' ? (
+                <button disabled className="h-14 w-14 rounded-full bg-muted text-muted-foreground flex items-center justify-center cursor-not-allowed">
+                  <FiRefreshCw className="h-6 w-6 animate-spin" />
+                </button>
+              ) : (
+                <>
+                  {/* Active call indicator */}
+                  <div className="flex items-center gap-3">
+                    {/* Listening indicator with animated rings */}
+                    <div className="relative">
+                      <button
+                        onClick={endVoiceSession}
+                        className="h-14 w-14 rounded-full bg-destructive text-destructive-foreground shadow-lg hover:shadow-xl transition-all flex items-center justify-center hover:scale-105"
+                      >
+                        <FiPhoneOff className="h-6 w-6" />
+                      </button>
+                      {isListening && !isSpeaking && (
+                        <>
+                          <span className="absolute inset-0 rounded-full border-2 border-green-500 animate-ping opacity-20" />
+                          <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-green-500 border-2 border-card" />
+                        </>
+                      )}
+                      {isSpeaking && (
+                        <>
+                          <span className="absolute inset-0 rounded-full border-2 border-primary animate-ping opacity-20" />
+                          <span className="absolute -top-1 -right-1 flex items-center justify-center h-4 w-4 rounded-full bg-primary border-2 border-card">
+                            <FiVolume2 className="h-2.5 w-2.5 text-primary-foreground" />
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </ErrorBoundary>
   )

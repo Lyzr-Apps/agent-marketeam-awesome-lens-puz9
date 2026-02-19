@@ -56,6 +56,24 @@
       },
       "voice_config": null,
       "file_output": false
+    },
+    "voice_marketing_assistant": {
+      "agent_id": "69977b013b886b94bdf07796",
+      "name": "Voice Marketing Assistant",
+      "type": "independent",
+      "provider": "OpenAI",
+      "model": "gpt-4o-mini",
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "managed_agents": [],
+      "image_output_config": null,
+      "voice_config": {
+        "initiator": "human",
+        "message": "",
+        "language": "English",
+        "voice": "sage"
+      },
+      "file_output": false
     }
   },
   "rag_ids": {},
